@@ -1,0 +1,228 @@
+---
+# monitoring-setup.yml - Playbook to setup monitoring on all cluster nodes
+
+- hosts: all_nodes
+  become: yes
+  tasks:
+    - name: Create system monitoring log directory
+      file:
+        path: /var/log/system-monitor
+        state: directory
+        mode: '0755'
+
+    - name: Create Cilium health check log directory
+      file:
+        path: /var/log/cilium-health
+        state: directory
+        mode: '0755'
+
+    - name: Deploy system monitoring script
+      copy:
+        dest: /usr/local/bin/system-monitor.sh
+        mode: '0755'
+        content: |
+          #!/bin/bash
+          # system-monitor.sh - Collect system information to diagnose connectivity issues
+
+          LOG_DIR="/var/log/system-monitor"
+          mkdir -p $LOG_DIR
+
+          TIMESTAMP=$(date +"%Y%m%d-%H%M%S")
+          LOG_FILE="$LOG_DIR/system-status-$TIMESTAMP.log"
+
+          echo "=== System Status Report: $TIMESTAMP ===" > $LOG_FILE
+          echo "" >> $LOG_FILE
+
+          echo "=== Memory Usage ===" >> $LOG_FILE
+          free -m >> $LOG_FILE
+          echo "" >> $LOG_FILE
+
+          echo "=== Disk Usage ===" >> $LOG_FILE
+          df -h >> $LOG_FILE
+          echo "" >> $LOG_FILE
+
+          echo "=== Network Connections ===" >> $LOG_FILE
+          ss -tuln >> $LOG_FILE
+          echo "" >> $LOG_FILE
+
+          echo "=== Network Interfaces ===" >> $LOG_FILE
+          ip -s addr >> $LOG_FILE
+          echo "" >> $LOG_FILE
+
+          echo "=== Network Routes ===" >> $LOG_FILE
+          ip route >> $LOG_FILE
+          echo "" >> $LOG_FILE
+
+          echo "=== iptables Rules ===" >> $LOG_FILE
+          iptables-save >> $LOG_FILE
+          echo "" >> $LOG_FILE
+
+          echo "=== UFW Status ===" >> $LOG_FILE
+          ufw status verbose >> $LOG_FILE
+          echo "" >> $LOG_FILE
+
+          echo "=== Cilium Status ===" >> $LOG_FILE
+          cilium status >> $LOG_FILE 2>&1
+          echo "" >> $LOG_FILE
+
+          echo "=== System Processes ===" >> $LOG_FILE
+          ps aux | grep -E '(cilium|kube|docker|containerd|etcd|haproxy)' >> $LOG_FILE
+          echo "" >> $LOG_FILE
+
+          echo "=== Kernel Message Buffer ===" >> $LOG_FILE
+          dmesg | tail -n 100 >> $LOG_FILE
+          echo "" >> $LOG_FILE
+
+          echo "=== Recent Log Entries ===" >> $LOG_FILE
+          journalctl -n 50 --no-pager >> $LOG_FILE
+          echo "" >> $LOG_FILE
+
+          # Rotate logs (keep only the last 100)
+          ls -t $LOG_DIR/system-status-*.log | tail -n +101 | xargs -r rm
+
+          # Cleanup logs older than 7 days
+          find $LOG_DIR -name "system-status-*.log" -mtime +7 -delete
+
+    - name: Deploy Cilium health check script
+      copy:
+        dest: /usr/local/bin/cilium-health-check.sh
+        mode: '0755'
+        content: |
+          #!/bin/bash
+          # cilium-health-check.sh - Validate Cilium networking
+
+          LOG_DIR="/var/log/cilium-health"
+          mkdir -p $LOG_DIR
+
+          TIMESTAMP=$(date +"%Y%m%d-%H%M%S")
+          LOG_FILE="$LOG_DIR/cilium-health-$TIMESTAMP.log"
+
+          echo "=== Cilium Health Check: $TIMESTAMP ===" > $LOG_FILE
+          echo "" >> $LOG_FILE
+
+          # Get node name
+          NODE_NAME=$(hostname)
+          echo "Node: $NODE_NAME" >> $LOG_FILE
+          echo "" >> $LOG_FILE
+
+          # Check Cilium status
+          echo "=== Cilium Status ===" >> $LOG_FILE
+          cilium status >> $LOG_FILE 2>&1
+          echo "" >> $LOG_FILE
+
+          # Check Cilium endpoint list
+          echo "=== Cilium Endpoints ===" >> $LOG_FILE
+          cilium endpoint list >> $LOG_FILE 2>&1
+          echo "" >> $LOG_FILE
+
+          # Check Cilium service list
+          echo "=== Cilium Services ===" >> $LOG_FILE
+          cilium service list >> $LOG_FILE 2>&1
+          echo "" >> $LOG_FILE
+
+          # Check connectivity to other nodes 
+          echo "=== Cilium Connectivity ===" >> $LOG_FILE
+          cilium connectivity test >> $LOG_FILE 2>&1 || true
+          echo "" >> $LOG_FILE
+
+          # Check BPF maps
+          echo "=== Cilium BPF Maps ===" >> $LOG_FILE
+          cilium bpf maps >> $LOG_FILE 2>&1
+          echo "" >> $LOG_FILE
+
+          # Check Cilium metrics
+          echo "=== Cilium Metrics ===" >> $LOG_FILE
+          cilium metrics >> $LOG_FILE 2>&1
+          echo "" >> $LOG_FILE
+          
+          # Rotate logs (keep only the last 20)
+          ls -t $LOG_DIR/cilium-health-*.log | tail -n +21 | xargs -r rm
+
+    - name: Create system monitor service
+      copy:
+        dest: /etc/systemd/system/system-monitor.service
+        content: |
+          [Unit]
+          Description=System Monitor Service
+          After=network.target
+
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/local/bin/system-monitor.sh
+          User=root
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Create system monitor timer
+      copy:
+        dest: /etc/systemd/system/system-monitor.timer
+        content: |
+          [Unit]
+          Description=Run system-monitor.sh every 5 minutes
+
+          [Timer]
+          OnBootSec=1min
+          OnUnitActiveSec=5min
+          AccuracySec=1s
+
+          [Install]
+          WantedBy=timers.target
+
+    - name: Create Cilium health check service
+      copy:
+        dest: /etc/systemd/system/cilium-health-check.service
+        content: |
+          [Unit]
+          Description=Cilium Health Check Service
+          After=network.target
+
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/local/bin/cilium-health-check.sh
+          User=root
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Create Cilium health check timer
+      copy:
+        dest: /etc/systemd/system/cilium-health-check.timer
+        content: |
+          [Unit]
+          Description=Run cilium-health-check.sh hourly
+
+          [Timer]
+          OnBootSec=5min
+          OnUnitActiveSec=1h
+          AccuracySec=1s
+
+          [Install]
+          WantedBy=timers.target
+
+    - name: Enable enhanced SSH logging
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        line: 'LogLevel VERBOSE'
+        regexp: '^#?LogLevel'
+      notify: restart ssh
+
+    - name: Enable and start system-monitor timer
+      systemd:
+        name: system-monitor.timer
+        enabled: yes
+        state: started
+        daemon_reload: yes
+        
+    - name: Enable and start cilium-health-check timer
+      systemd:
+        name: cilium-health-check.timer
+        enabled: yes
+        state: started
+        daemon_reload: yes
+
+  handlers:
+    - name: restart ssh
+      service:
+        name: ssh
+        state: restarted

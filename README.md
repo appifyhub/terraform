@@ -324,6 +324,10 @@ ansible -i .ansible/hosts all_worker_nodes -m shell -a "reboot now"
 
 ### Troubleshooting
 
+This section covers some of the most common issues you might face with this setup.
+
+#### Initialization Issues
+
 The three most common statuses of `cloud-init` are `running`, `done`, and `error`. In case you see an error at any point of this setup, you can run some of the following checks and inspect the outputs:
 
 ```bash
@@ -338,13 +342,103 @@ find /var/lib/cloud/instances -name runcmd
 sh -ex PATH_TO_YOUR_ACTUAL_RUNCMD_GOES_HERE
 ```
 
-Haven't found anything interesting?
+Haven't found anything interesting in the logs?
 
   - Did you turn on the `init` flag in your `main.tf` for the first `terraform apply`?
   - Have you tried asking your favorite AI or search engine?
   - Have you tried opening a GitHub issue?
 
-### Further Reading and Maintenance
+#### Connectivity Issues and Unreachability
+
+If cluster nodes become unreachable after a few days (via SSH or K8s API), consider these potential causes:
+
+  1. **Cilium networking issues** – Cilium provides CNI functionality but may encounter stability issues
+  1. **Connection tracking table limits** – Network connection tracking may become exhausted
+  1. **Network interface problems** – Interface connectivity to the private network may fail
+  1. **SSH service failures** – The SSH daemon might stop responding
+
+Diagnosing and resolving connectivity issues can be challenging, especially if the nodes are unreachable. Here are some first steps to help you troubleshoot:
+
+  - **SSH into the gateway**: Use the `./ssh-node gateway` script to SSH into the gateway node and check the status of the nodes from there
+  - **SSH into the control-plane**: Use the `./ssh-node cluster` script to SSH into the gateway node and check the status of the nodes from there
+  - **Check Cilium status**: Use `kubectl get pods -n kube-system` to check the status of Cilium pods. If they are not running, you may need to restart them or check their logs
+  - **Check connection tracking table**: Use `cat /proc/net/ip_conntrack` to check the connection tracking table from each node. If it is full, you may need to increase the size of the table
+  - **Check network interfaces**: Use `ip a` to check the status of network interfaces in nodes. If they are down, you may need to bring them up manually
+  - **Check SSH service**: Use `systemctl status ssh` to check the status of the SSH service. If it is not running, you may need to restart it
+
+We can also deploy some advanced monitoring and auto-fix tools to help us with these issues. The following tools are included in the `monitoring-setup.yml` playbook and the `network-check-fix.sh` script. You can enable them by running the following commands:
+
+```bash
+# Deploy the advanced monitoring setup to all nodes
+ansible-playbook -i .ansible/hosts monitoring-setup.yml
+
+# Deploy the network check script on all nodes
+ansible -i .ansible/hosts all_nodes -m copy -a "src=network-check-fix.sh dest=/usr/local/bin/network-check-fix.sh mode=0755"
+# Run the network check script on all nodes
+ansible -i .ansible/hosts all_nodes -m shell -a "/usr/local/bin/network-check-fix.sh"
+```
+
+This setup provides:
+
+  - System snapshots every 5 minutes in `/var/log/system-monitor/`
+  - Cilium health checks hourly in `/var/log/cilium-health/`
+  - Network validation and auto-repair in `/var/log/network-fixes/`
+  - Enhanced SSH logging for connection diagnostics
+
+If nodes become unreachable, check these log directories after running a manual Power Cycle to identify the root cause. Once done, you can remove the monitoring tools like this:
+
+```bash
+# Remove monitoring services and timers
+ansible -i .ansible/hosts all_nodes -m systemd -a "name=system-monitor.timer state=stopped enabled=no"
+ansible -i .ansible/hosts all_nodes -m systemd -a "name=cilium-health-check.timer state=stopped enabled=no"
+ansible -i .ansible/hosts all_nodes -m file -a "path=/etc/systemd/system/system-monitor.service state=absent"
+ansible -i .ansible/hosts all_nodes -m file -a "path=/etc/systemd/system/system-monitor.timer state=absent"
+ansible -i .ansible/hosts all_nodes -m file -a "path=/etc/systemd/system/cilium-health-check.service state=absent"
+ansible -i .ansible/hosts all_nodes -m file -a "path=/etc/systemd/system/cilium-health-check.timer state=absent"
+ansible -i .ansible/hosts all_nodes -m file -a "path=/usr/local/bin/system-monitor.sh state=absent"
+ansible -i .ansible/hosts all_nodes -m file -a "path=/usr/local/bin/cilium-health-check.sh state=absent"
+ansible -i .ansible/hosts all_nodes -m file -a "path=/usr/local/bin/network-check-fix.sh state=absent"
+ansible -i .ansible/hosts all_nodes -m file -a "path=/etc/cron.d/network-check-fix state=absent"
+ansible -i .ansible/hosts all_nodes -m file -a "path=/var/log/system-monitor state=absent"
+ansible -i .ansible/hosts all_nodes -m file -a "path=/var/log/cilium-health state=absent"
+ansible -i .ansible/hosts all_nodes -m file -a "path=/var/log/network-fixes state=absent"
+```
+
+#### DHCP Lease Issues
+
+This particular cluster setup comes with pre-configured node networking routes and IP forwarding rules that are part of our pre-configured private network (with a ⁠`/24` subnet). The cloud provider’s default network configuration is usually in a `⁠/32` subnet. Because nodes may request a new IP configuration from the authoritative DHCP server during boot, adopting that new network routing configuration can cause setup failure when multiple nodes are rebooted simultaneously (especially if control-plane is also unreachable).
+
+In a nutshell, the affected nodes could be searching for other cluster nodes through the wrong network space, unable to find their neighbors. This issue will likely generate numerous `HA-Proxy` error messages or even cause a **complete loss of SSH/K8s connectivity** to the nodes. The cluster Gateway generally does not experience this problem because it sits on the outer boundary of the private network, having a public IP address attached to it (as shown in the cluster topology chart).
+
+With Kured, Cilium and OS updates frequently requiring our nodes to reboot, loss of network state remains a risk. In order to force nodes into respecting their base network configuration, you can do one of the two following things:
+
+##### 1. Remove [`hc-utils`](https://github.com/hetznercloud/hc-utils)
+  
+Recommended, as per [Hetzner's guidelines](https://github.com/identiops/terraform-hcloud-k3s/pull/28#issuecomment-2778063147). HC Utils will stop the DHCP service from provisioning your nodes with new network configuration.
+
+```bash
+# See https://github.com/identiops/terraform-hcloud-k3s/issues/27
+# Remove hc-utils as they're not needed for manually network-configured nodes
+ansible -i .ansible/hosts all_nodes -m shell -a "apt-get remove hc-utils -y"
+ansible -i .ansible/hosts all_nodes -m shell -a "apt-get autoremove -y"
+ansible -i .ansible/hosts all_nodes -m shell -a "apt-get autoclean -y"
+```
+
+##### 2. Deactivate [`dhcpd`](https://linux.die.net/man/8/dhcpd)
+  
+Not recommended anymore, as per [Hetzner's guidelines](https://github.com/identiops/terraform-hcloud-k3s/pull/28#issuecomment-2778063147).
+
+```bash
+# See https://github.com/identiops/terraform-hcloud-k3s/issues/27
+# Disable dhcpd and net-scan since it is in conflict with systemd-networkd
+systemctl disable --now hc-net-ifup@enp7s0.service || true
+systemctl disable hc-net-scan.service
+mv /lib/udev/rules.d/81-hc-network-interfaces.rules /lib/udev/rules.d/81-hc-network-interfaces.rules.legacy
+```
+
+The previously shared Ansible Playbooks and scripts for troubleshooting also restart the `systemd-networkd` service on a regular basis, potentially also eliminating this issue by applying a different approach.
+
+#### Further Maintenance and Troubleshooting
 
 We find the [Identiops](https://github.com/identiops/terraform-hcloud-k3s/blob/main/README.md#add-nodes-or-node-pools) guide a great resource for further reading and maintenance of your cluster. It covers how to add nodes or node pools, how to manage the K8s API, and how to run maintenance tasks on the cluster such as OS upgrades, network policy changes, and other tasks.
 
