@@ -48,15 +48,15 @@ terraform {
 ###########################
 
 module "cluster" {
-  # source               = "github.com/identiops/terraform-hcloud-k3s?ref=5.0.0"
+  # source               = "github.com/identiops/terraform-hcloud-k3s?ref=6.1.0"
   source                 = "identiops/k3s/hcloud"
-  version                = "5.0.0"
+  version                = "6.1.0"
   hcloud_token           = var.hcloud_token           # Set via `export TF_VAR_hcloud_token=xyz` or in .tfvars
   hcloud_token_read_only = var.hcloud_token_read_only # Set via `export TF_VAR_hcloud_token_read_only=abc` or in .tfvars
 
   # Cluster Settings
   # ----------------
-  delete_protection = false # Must be set to false + `terraform apply` before destroying the cluster via `terraform destroy`!
+  delete_protection = true # Must be set to false + `terraform apply` before destroying the cluster via `terraform destroy`!
   cluster_name      = "ah"
   default_location  = "fsn1"         # See all: https://registry.terraform.io/providers/hetznercloud/hcloud/latest/docs/resources/server#location
   default_image     = "ubuntu-24.04" # See all: `curl -H \"Authorization: Bearer $HETZNER_API_TOKEN_READONLY\" https://api.hetzner.cloud/v1/images | jq -r '.images[].name' | sort`
@@ -76,9 +76,9 @@ module "cluster" {
 
   # Gateway Settings
   # ----------------------
-  gateway_firewall_k8s_open = true  # Open kubeapi port to the internet
+  gateway_firewall_k8s_open = true   # Open kubeapi port to the internet
   gateway_server_type       = "cx22" # See all: https://docs.hetzner.com/cloud/servers/overview#shared-vcpu
-  gateway_labels            = {
+  gateway_labels = {
     "gateway" = "yes"
   }
 
@@ -107,9 +107,9 @@ module "cluster" {
         init = false,
       }
       is_control_plane   = true
-      schedule_workloads = true
+      schedule_workloads = true   # Disable if you want to use this node pool for control plane only
       type               = "cx22" # See all: https://docs.hetzner.com/cloud/servers/overview#shared-vcpu
-      count              = 1 # Should be an odd number for etcd quorum
+      count              = 1      # Should be an odd number for etcd quorum
       count_width        = 2
       labels = {
         "control-plane" = "yes"
@@ -124,10 +124,10 @@ module "cluster" {
       type               = "cx22" # See all: https://docs.hetzner.com/cloud/servers/overview#shared-vcpu
       count              = 1
       count_width        = 2
-      labels             = {
+      labels = {
         "worker-node" = "yes"
       }
-      taints             = {}
+      taints = {}
     }
   }
 }
