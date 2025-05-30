@@ -50,7 +50,7 @@ terraform {
 module "cluster" {
   # source               = "github.com/identiops/terraform-hcloud-k3s?ref=6.1.0"
   source                 = "identiops/k3s/hcloud"
-  version                = "6.1.0"
+  version                = "6.1.2"
   hcloud_token           = var.hcloud_token           # Set via `export TF_VAR_hcloud_token=xyz` or in .tfvars
   hcloud_token_read_only = var.hcloud_token_read_only # Set via `export TF_VAR_hcloud_token_read_only=abc` or in .tfvars
 
