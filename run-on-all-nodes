@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Run commands on all cluster nodes
+# Usage: ./run-on-all-nodes "command to run"
+
+set -eEuo pipefail
+
+COMMAND="${1:-echo 'No command specified'}"
+
+echo "Running command on all nodes: $COMMAND"
+echo "=============================================="
+
+for node in $(./ls-nodes | grep -v kubeapi | grep -v cluster); do
+    echo
+    echo "==================== $node ===================="
+    if ./ssh-node "$node" "$COMMAND"; then
+        echo "✓ Success on $node"
+    else
+        echo "✗ Failed on $node"
+    fi
+done
+
+echo
+echo "=============================================="
+echo "Command execution completed"
