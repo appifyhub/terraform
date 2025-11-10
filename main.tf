@@ -50,7 +50,7 @@ terraform {
 module "cluster" {
   # source               = "github.com/identiops/terraform-hcloud-k3s?ref=6.1.0"
   source                 = "identiops/k3s/hcloud"
-  version                = "6.1.2"
+  version                = "6.2.3"
   hcloud_token           = var.hcloud_token           # Set via `export TF_VAR_hcloud_token=xyz` or in .tfvars
   hcloud_token_read_only = var.hcloud_token_read_only # Set via `export TF_VAR_hcloud_token_read_only=abc` or in .tfvars
 
@@ -77,7 +77,7 @@ module "cluster" {
   # Gateway Settings
   # ----------------------
   gateway_firewall_k8s_open = true   # Open kubeapi port to the internet
-  gateway_server_type       = "cx22" # See all: https://docs.hetzner.com/cloud/servers/overview#shared-vcpu
+  gateway_server_type       = "cx23" # See all: https://www.hetzner.com/cloud#:~:text=Overview-,Prices,-Locations
   gateway_labels = {
     "gateway" = "yes"
   }
@@ -108,7 +108,7 @@ module "cluster" {
       }
       is_control_plane   = true
       schedule_workloads = true   # Disable if you want to use this node pool for control plane only
-      type               = "cx22" # See all: https://docs.hetzner.com/cloud/servers/overview#shared-vcpu
+      type               = "cx33" # See all: https://www.hetzner.com/cloud#:~:text=Overview-,Prices,-Locations
       count              = 1      # Should be an odd number for etcd quorum
       count_width        = 2
       labels = {
@@ -121,7 +121,7 @@ module "cluster" {
     workers = {
       is_control_plane   = false
       schedule_workloads = true
-      type               = "cx22" # See all: https://docs.hetzner.com/cloud/servers/overview#shared-vcpu
+      type               = "cx23" # See all: https://www.hetzner.com/cloud#:~:text=Overview-,Prices,-Locations
       count              = 1
       count_width        = 2
       labels = {
