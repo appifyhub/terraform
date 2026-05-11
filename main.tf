@@ -122,7 +122,7 @@ module "cluster" {
       is_control_plane   = false
       schedule_workloads = true
       type               = "cx23" # See all: https://www.hetzner.com/cloud#:~:text=Overview-,Prices,-Locations
-      count              = 1
+      count              = 3
       count_width        = 2
       labels = {
         "worker-node" = "yes"
